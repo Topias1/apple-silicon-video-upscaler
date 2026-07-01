@@ -390,7 +390,7 @@ def run_single_file(
             seg_stem = Path(seg_path).stem
             out_seg_file = os.path.join(seg_out_dir, f"{seg_stem}.mp4")
             abs_path = os.path.abspath(out_seg_file)
-            escaped_path = abs_path.replace("\\", "\\\\").replace("'", "\\'")
+            escaped_path = abs_path.replace("'", "'\\''")
             f.write(f"file '{escaped_path}'\n")
 
     video_only_path = os.path.join(work_dir, "video_only.mp4")
