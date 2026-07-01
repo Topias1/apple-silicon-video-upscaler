@@ -200,9 +200,9 @@ def run_single_file(
     if opts.get("work_dir"):
         work_dir = os.path.abspath(opts["work_dir"])
     else:
-        # Default work dir: <input_dir>/.work_<stem>_<preset>
+        # Default work dir: .work_<stem>_<preset> inside current working directory
         in_path = Path(input_abs)
-        work_dir = os.path.join(in_path.parent, f".work_{in_path.stem}_{preset}")
+        work_dir = os.path.abspath(f".work_{in_path.stem}_{preset}")
         
     os.makedirs(work_dir, exist_ok=True)
     manifest_path = os.path.join(work_dir, "manifest.json")
