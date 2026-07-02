@@ -1,6 +1,12 @@
 import os
 import sys
 
+# Add Homebrew to PATH on macOS to ensure ffmpeg/ffprobe are found when run as an App bundle
+if sys.platform == "darwin":
+    for path in ("/opt/homebrew/bin", "/usr/local/bin"):
+        if path not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = path + os.path.pathsep + os.environ.get("PATH", "")
+
 try:
     sys.stdout.reconfigure(write_through=True, line_buffering=True)
     sys.stderr.reconfigure(write_through=True, line_buffering=True)
@@ -74,7 +80,7 @@ if __name__ == "__main__":
     if os.environ.get("VIDEO_UPSCALER_CLI") == "1":
         # Run as the CLI upscaler helper
         import upscale
-        upscale.main()
+        sys.exit(upscale.main())
     else:
         # Run as the native GUI app
         main()
