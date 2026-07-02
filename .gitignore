@@ -11,3 +11,6 @@ realesrgan/
 build/
 dist/
 *.spec
+.agents/
+.gemini/
+.codex/
