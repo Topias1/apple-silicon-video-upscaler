@@ -21,7 +21,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='VideoUpscalePy',
+    name='VideoUpscalAI',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -41,11 +41,11 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='VideoUpscalePy',
+    name='VideoUpscalAI',
 )
 app = BUNDLE(
     coll,
-    name='VideoUpscalePy.app',
+    name='VideoUpscalAI.app',
     icon='logo.icns',
     bundle_identifier=None,
 )
