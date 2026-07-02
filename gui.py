@@ -210,6 +210,14 @@ class GUIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/upscale":
+            with task_lock:
+                if task_state["status"] == "running":
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "Already running"}).encode("utf-8"))
+                    return
+            
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             params = json.loads(post_data.decode("utf-8"))
@@ -342,7 +350,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         .main-layout {
             display: grid;
-            grid-template-columns: 420px 1fr;
+            grid-template-columns: 1.1fr 1fr;
             gap: 24px;
             align-items: stretch;
             flex-grow: 1;
@@ -351,13 +359,13 @@ HTML_CONTENT = """<!DOCTYPE html>
         .form-side {
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 20px;
         }
 
         .form-group {
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 8px;
         }
 
         label {
@@ -373,7 +381,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         input[type="text"], select, input[type="number"] {
             width: 100%;
-            padding: 8px 12px;
+            padding: 10px 12px;
             background: var(--card-bg);
             border: 1px solid var(--border-color);
             border-radius: 8px;
@@ -390,7 +398,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         }
 
         .btn-browse {
-            padding: 8px 12px;
+            padding: 8px 14px;
             background: var(--card-bg);
             border: 1px solid var(--border-color);
             border-radius: 8px;
@@ -409,24 +417,51 @@ HTML_CONTENT = """<!DOCTYPE html>
             border-color: oklch(0.3 0.01 250);
         }
 
-        .grid {
+        .form-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 16px;
         }
 
-        .checkbox-group {
+        .checkbox-wrapper {
             display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 4px;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            transition: border-color 0.15s ease, background-color 0.15s ease;
         }
 
-        input[type="checkbox"] {
+        .checkbox-wrapper:hover {
+            border-color: oklch(0.3 0.01 250);
+            background: oklch(0.18 0.005 250);
+        }
+
+        .checkbox-wrapper input[type="checkbox"] {
             width: 18px;
             height: 18px;
             accent-color: var(--accent-color);
             cursor: pointer;
+            margin-top: 2px;
+        }
+
+        .checkbox-label-title {
+            font-weight: 600;
+            font-size: 0.88rem;
+            color: var(--text-color);
+            cursor: pointer;
+            display: block;
+        }
+
+        .checkbox-label-desc {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: block;
+            margin-top: 3px;
+            line-height: 1.35;
         }
 
         .btn-container {
@@ -691,7 +726,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         </div>
                     </div>
 
-                    <div class="grid">
+                    <div class="form-grid">
                         <div class="form-group">
                             <label for="preset">Preset de Résolution</label>
                             <select id="preset">
@@ -714,25 +749,37 @@ HTML_CONTENT = """<!DOCTYPE html>
                         </div>
                     </div>
 
-                    <div class="grid">
+                    <div class="form-grid">
                         <div class="form-group">
                             <label for="workers">Nombre de Chunks en Parallèle</label>
                             <input type="number" id="workers" min="1" max="8" value="2">
                         </div>
+                    </div>
 
-                        <div class="form-group">
-                            <label style="margin-bottom: 6px;">Filtres & Améliorations</label>
-                            <div class="checkbox-group">
-                                <input type="checkbox" id="denoise">
-                                <label for="denoise" style="font-weight: normal; color: var(--text-color); cursor: pointer;">Réduire le scintillement (Denoise temporel)</label>
+                    <div class="form-group" style="margin-top: 8px;">
+                        <label style="margin-bottom: 4px;">Filtres & Améliorations</label>
+                        
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="denoise">
+                            <div>
+                                <label for="denoise" class="checkbox-label-title">Réduction de bruit & scintillement</label>
+                                <span class="checkbox-label-desc">Applique un débruitage temporel pour stabiliser l'image.</span>
                             </div>
-                            <div class="checkbox-group">
-                                <input type="checkbox" id="interpolate">
-                                <label for="interpolate" style="font-weight: normal; color: var(--text-color); cursor: pointer;">Fluidifier à 60 FPS (Interpolation)</label>
+                        </div>
+
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="interpolate">
+                            <div>
+                                <label for="interpolate" class="checkbox-label-title">Fluidification temporelle (60 FPS)</label>
+                                <span class="checkbox-label-desc">Interpole les images manquantes pour un rendu ultra-fluide.</span>
                             </div>
-                            <div class="checkbox-group">
-                                <input type="checkbox" id="recursive">
-                                <label for="recursive" style="font-weight: normal; color: var(--text-color); cursor: pointer;">Traiter les sous-dossiers récursivement</label>
+                        </div>
+
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="recursive">
+                            <div>
+                                <label for="recursive" class="checkbox-label-title">Recherche récursive dans les sous-dossiers</label>
+                                <span class="checkbox-label-desc">Scanne récursivement les répertoires pour trouver toutes les vidéos.</span>
                             </div>
                         </div>
                     </div>
@@ -871,6 +918,16 @@ HTML_CONTENT = """<!DOCTYPE html>
         function startUpscale(event) {
             event.preventDefault();
             
+            // Reset UI states immediately for a responsive experience
+            document.getElementById("logTerminal").innerText = "Lancement de l'upscaling par IA...";
+            document.getElementById("progressText").innerText = "0%";
+            document.getElementById("progressBar").style.width = "0%";
+            document.getElementById("progressSegment").innerText = "Initialisation...";
+            const badge = document.getElementById("statusBadge");
+            badge.innerText = "RUNNING";
+            badge.className = "status-badge status-running";
+            document.getElementById("outputSuccess").innerText = "";
+            
             const params = {
                 input_file: document.getElementById("input_file").value,
                 output_file: document.getElementById("output_file").value,
@@ -892,7 +949,6 @@ HTML_CONTENT = """<!DOCTYPE html>
                 if (data.started) {
                     document.getElementById("submitBtn").style.display = "none";
                     document.getElementById("cancelBtn").style.display = "block";
-                    document.getElementById("outputSuccess").innerText = "";
                     
                     if (pollInterval) clearInterval(pollInterval);
                     pollInterval = setInterval(pollStatus, 500);
