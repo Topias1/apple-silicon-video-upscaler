@@ -52,7 +52,7 @@ def run_upscale_thread(cmd_args):
                         if len(task_state["logs"]) > 100:
                             task_state["logs"].pop(0)
                         
-                        # Parse progress bars, e.g. "seg_0000.mkv: [███░░░] 12.50%" or "progress: 12.50%"
+                        # Parse progress bars
                         if "%" in line:
                             try:
                                 val_str = line.split("%")[0].strip().split()[-1]
@@ -92,7 +92,7 @@ def run_upscale_thread(cmd_args):
 
 class GUIHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Suppress request spam logs in console
+        # Suppress request spam logs
         return
 
     def do_GET(self):
@@ -126,6 +126,52 @@ class GUIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"cancelled": True}).encode("utf-8"))
             
+        elif parsed_url.path == "/explore":
+            query = urllib.parse.parse_qs(parsed_url.query)
+            path_param = query.get("path", [None])[0]
+            
+            if not path_param:
+                current_path = os.path.expanduser("~")
+            else:
+                current_path = os.path.abspath(path_param)
+                
+            if not os.path.exists(current_path) or not os.path.isdir(current_path):
+                current_path = os.path.expanduser("~")
+                
+            try:
+                entries = []
+                for entry in sorted(os.listdir(current_path)):
+                    if entry.startswith(".") and not entry == ".work":
+                        continue
+                    full_path = os.path.join(current_path, entry)
+                    is_dir = os.path.isdir(full_path)
+                    
+                    # Filter files to show only video formats
+                    if not is_dir:
+                        ext = os.path.splitext(entry)[1].lower()
+                        if ext not in (".mp4", ".mkv", ".mov", ".avi", ".webm"):
+                            continue
+                            
+                    entries.append({
+                        "name": entry,
+                        "path": full_path,
+                        "is_dir": is_dir
+                    })
+                
+                response_data = {
+                    "current_path": current_path,
+                    "parent_path": os.path.dirname(current_path) if current_path != "/" else "/",
+                    "entries": entries
+                }
+                
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response_data).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
@@ -144,7 +190,6 @@ class GUIHandler(BaseHTTPRequestHandler):
             denoise = params.get("denoise", False)
             interpolate = params.get("interpolate", False)
             
-            # Build CLI arguments
             cmd_args = [input_file]
             if output_file:
                 cmd_args.extend(["-o", output_file])
@@ -153,7 +198,6 @@ class GUIHandler(BaseHTTPRequestHandler):
             cmd_args.extend(["--model", model])
             cmd_args.extend(["--workers", str(workers)])
             
-            # Load native Upscayl binary if present
             upscayl_bin = "/Applications/Upscayl.app/Contents/Resources/bin/upscayl-bin"
             if os.path.exists(upscayl_bin):
                 cmd_args.extend(["--realesrgan-bin", upscayl_bin])
@@ -161,10 +205,8 @@ class GUIHandler(BaseHTTPRequestHandler):
             if denoise:
                 cmd_args.append("--temporal-denoise")
             if interpolate:
-                # Interpolate to 60 FPS
                 cmd_args.extend(["--interpolate-fps", "60"])
                 
-            # Run in separate thread
             thread = threading.Thread(target=run_upscale_thread, args=(cmd_args,))
             thread.daemon = True
             thread.start()
@@ -250,6 +292,11 @@ HTML_CONTENT = """<!DOCTYPE html>
             color: var(--text-color);
         }
 
+        .input-with-btn {
+            display: flex;
+            gap: 12px;
+        }
+
         input[type="text"], select, input[type="number"] {
             width: 100%;
             padding: 14px 16px;
@@ -266,6 +313,25 @@ HTML_CONTENT = """<!DOCTYPE html>
             border-color: #6366f1;
             outline: none;
             box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+        }
+
+        .btn-browse {
+            padding: 12px 18px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            color: var(--text-color);
+            cursor: pointer;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-browse:hover {
+            background: rgba(99, 102, 241, 0.15);
+            border-color: #6366f1;
         }
 
         .grid {
@@ -386,6 +452,106 @@ HTML_CONTENT = """<!DOCTYPE html>
         .status-running { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
         .status-completed { background: rgba(16, 185, 129, 0.2); color: #34d399; }
         .status-failed { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+
+        /* File Explorer Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: rgba(17, 24, 39, 0.95);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80%;
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 2rem;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        .close-btn:hover {
+            color: var(--text-color);
+        }
+
+        .breadcrumbs {
+            font-size: 0.9rem;
+            color: #6366f1;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            word-break: break-all;
+            cursor: pointer;
+        }
+
+        .file-list {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 300px;
+            max-height: 400px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .file-item:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .file-icon {
+            font-size: 1.2rem;
+        }
+
+        .file-name {
+            font-size: 0.95rem;
+            color: var(--text-color);
+            word-break: break-all;
+        }
+
+        .modal-footer {
+            margin-top: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
@@ -395,13 +561,19 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         <form id="upscaleForm" onsubmit="startUpscale(event)">
             <div class="form-group">
-                <label for="input_file">Chemin de la vidéo source (Absolu ou Relatif)</label>
-                <input type="text" id="input_file" required placeholder="Ex: /Users/amnesia/Downloads/Lila.mp4">
+                <label for="input_file">Vidéo source</label>
+                <div class="input-with-btn">
+                    <input type="text" id="input_file" required placeholder="Sélectionnez une vidéo...">
+                    <button type="button" class="btn-browse" onclick="openExplorer('input_file')">📂 Parcourir</button>
+                </div>
             </div>
 
             <div class="form-group">
-                <label for="output_file">Chemin de la vidéo de sortie (Optionnel)</label>
-                <input type="text" id="output_file" placeholder="Ex: /Users/amnesia/Downloads/Lila_upscaled.mp4">
+                <label for="output_file">Chemin ou dossier de sortie (Optionnel)</label>
+                <div class="input-with-btn">
+                    <input type="text" id="output_file" placeholder="Ex: /Users/amnesia/Downloads/Lila_upscaled.mp4">
+                    <button type="button" class="btn-browse" onclick="openExplorer('output_file')">📂 Parcourir</button>
+                </div>
             </div>
 
             <div class="grid">
@@ -468,8 +640,89 @@ HTML_CONTENT = """<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- File Explorer Modal -->
+    <div id="explorerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Explorateur de Fichiers</h2>
+                <button type="button" class="close-btn" onclick="closeExplorer()">&times;</button>
+            </div>
+            <div class="breadcrumbs" id="breadcrumbs"></div>
+            <div class="file-list" id="fileList"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn-primary" id="selectCurrentFolderBtn" style="display:none; flex:none; width:auto; padding: 10px 16px;">Sélectionner ce dossier</button>
+                <button type="button" class="btn-cancel" onclick="closeExplorer()" style="flex:none; width:auto; padding: 10px 16px;">Fermer</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let pollInterval = null;
+        let activeInputId = "";
+
+        function openExplorer(inputId) {
+            activeInputId = inputId;
+            document.getElementById("explorerModal").style.display = "flex";
+            loadDir("");
+        }
+
+        function closeExplorer() {
+            document.getElementById("explorerModal").style.display = "none";
+        }
+
+        function loadDir(path) {
+            const url = "/explore?path=" + encodeURIComponent(path);
+            fetch(url)
+            .then(res => res.json())
+            .then(data => {
+                const list = document.getElementById("fileList");
+                list.innerHTML = "";
+                
+                // Parent folder navigation
+                if (data.parent_path && data.parent_path !== data.current_path) {
+                    const item = document.createElement("div");
+                    item.className = "file-item";
+                    item.onclick = () => loadDir(data.parent_path);
+                    item.innerHTML = `<span class="file-icon">📁</span><span class="file-name">.. (Dossier Parent)</span>`;
+                    list.appendChild(item);
+                }
+                
+                // Entries
+                data.entries.forEach(entry => {
+                    const item = document.createElement("div");
+                    item.className = "file-item";
+                    if (entry.is_dir) {
+                        item.onclick = () => loadDir(entry.path);
+                        item.innerHTML = `<span class="file-icon">📁</span><span class="file-name">${entry.name}</span>`;
+                    } else {
+                        item.onclick = () => selectFile(entry.path);
+                        item.innerHTML = `<span class="file-icon">🎥</span><span class="file-name">${entry.name}</span>`;
+                    }
+                    list.appendChild(item);
+                });
+                
+                // Breadcrumbs
+                const crumbs = document.getElementById("breadcrumbs");
+                crumbs.innerText = data.current_path;
+                
+                // Folder selection config
+                const selectFolderBtn = document.getElementById("selectCurrentFolderBtn");
+                if (activeInputId === "output_file") {
+                    selectFolderBtn.style.display = "block";
+                    selectFolderBtn.onclick = () => {
+                        document.getElementById("output_file").value = data.current_path;
+                        closeExplorer();
+                    };
+                } else {
+                    selectFolderBtn.style.display = "none";
+                }
+            });
+        }
+
+        function selectFile(filePath) {
+            document.getElementById(activeInputId).value = filePath;
+            closeExplorer();
+        }
 
         function startUpscale(event) {
             event.preventDefault();
@@ -556,7 +809,7 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         pass
-    print("\\nStopping server...")
+    print("\nStopping server...")
 
 if __name__ == "__main__":
     main()
