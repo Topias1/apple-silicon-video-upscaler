@@ -1,8 +1,8 @@
-# Apple Silicon Video Upscaler
+# VideoUpscalePy
 
 A robust, resumable command-line pipeline that upscales videos using **Real-ESRGAN-ncnn-vulkan** (GPU-accelerated inference) for frame upscaling and **ffmpeg** for demuxing, downscaling, and hardware-accelerated re-encoding.
 
-Developed and optimized for **Apple Silicon macOS**, but architected from the ground up to support **Linux** (NVIDIA NVENC, Intel/AMD VAAPI, and CPU libx265) including guests running under **UTM (v5.0+ with Venus Vulkan virtualization)**.
+Developed and optimized for **Apple Silicon macOS**, but architected from the ground up to support **Linux** (NVIDIA NVENC, Intel/AMD VAAPI, and CPU libx265).
 
 ## Key Features
 
@@ -20,9 +20,9 @@ Developed and optimized for **Apple Silicon macOS**, but architected from the gr
 ### Standalone macOS Application
 For macOS users, a pre-compiled, **100% self-contained** standalone bundle is available:
 * **Zero External Dependencies**: You do **NOT** need to install `ffmpeg`, `ffprobe`, `realesrgan-ncnn-vulkan`, or *Upscayl*. All binaries and AI models are pre-bundled inside the app.
-* **To run**: Simply double-click `dist/AppleSiliconVideoUpscaler.app` in Finder, or run:
+* **To run**: Simply double-click `dist/VideoUpscalePy.app` in Finder, or run:
   ```bash
-  open dist/AppleSiliconVideoUpscaler.app
+  open dist/VideoUpscalePy.app
   ```
 
 ### Developer Setup (Source Code Run)

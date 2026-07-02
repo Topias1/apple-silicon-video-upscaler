@@ -10,7 +10,6 @@ __pycache__/
 realesrgan/
 build/
 dist/
-*.spec
 .agents/
 .gemini/
 .codex/
