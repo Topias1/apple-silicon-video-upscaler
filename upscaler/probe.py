@@ -170,12 +170,24 @@ def probe_video(video_path: str) -> VideoInfo:
     )
 
 def detect_video_type(video_path: str) -> str:
-    """Detects if a video is 'animation' or 'cinema' using color variance heuristics."""
+    """Detects if a video is 'animation' or 'cinema' using filename keywords and color variance heuristics."""
     import tempfile
     import os
     import uuid
     from .tools import get_ffmpeg_path
     
+    # 1. Check filename for animation keywords (fast path)
+    base_lower = os.path.basename(video_path).lower()
+    animation_keywords = [
+        "anime", "animation", "cartoon", "iceage", "ice age", "toystory", "toy story",
+        "shrek", "pixar", "disney", "dreamworks", "ghibli", "naruto", "onepiece", "one piece",
+        "bleach", "dragonball", "dragon ball", "boruto", "pokemon", "manga", "frozen",
+        "ratatouille", "coco", "moana", "tangled", "cinderella", "aladdin", "madagascar",
+        "kungfupanda", "kung fu panda", "minions", "despicable", "simpsons", "family guy"
+    ]
+    if any(kw in base_lower for kw in animation_keywords):
+        return "animation"
+        
     # Extract 1 frame from the video
     temp_dir = tempfile.gettempdir()
     temp_png = os.path.join(temp_dir, f"probe_{uuid.uuid4().hex}.png")
