@@ -92,7 +92,6 @@ def run_upscale_thread(cmd_args):
 
 class GUIHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Suppress request spam logs
         return
 
     def do_GET(self):
@@ -146,7 +145,6 @@ class GUIHandler(BaseHTTPRequestHandler):
                     full_path = os.path.join(current_path, entry)
                     is_dir = os.path.isdir(full_path)
                     
-                    # Filter files to show only video formats
                     if not is_dir:
                         ext = os.path.splitext(entry)[1].lower()
                         if ext not in (".mp4", ".mkv", ".mov", ".avi", ".webm"):
@@ -189,6 +187,7 @@ class GUIHandler(BaseHTTPRequestHandler):
             workers = params.get("workers", 1)
             denoise = params.get("denoise", False)
             interpolate = params.get("interpolate", False)
+            recursive = params.get("recursive", False)
             
             cmd_args = [input_file]
             if output_file:
@@ -206,6 +205,8 @@ class GUIHandler(BaseHTTPRequestHandler):
                 cmd_args.append("--temporal-denoise")
             if interpolate:
                 cmd_args.extend(["--interpolate-fps", "60"])
+            if recursive:
+                cmd_args.append("--recursive")
                 
             thread = threading.Thread(target=run_upscale_thread, args=(cmd_args,))
             thread.daemon = True
@@ -561,9 +562,9 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         <form id="upscaleForm" onsubmit="startUpscale(event)">
             <div class="form-group">
-                <label for="input_file">Vidéo source</label>
+                <label for="input_file">Vidéo ou Dossier source</label>
                 <div class="input-with-btn">
-                    <input type="text" id="input_file" required placeholder="Sélectionnez une vidéo...">
+                    <input type="text" id="input_file" required placeholder="Sélectionnez un fichier ou un dossier...">
                     <button type="button" class="btn-browse" onclick="openExplorer('input_file')">📂 Parcourir</button>
                 </div>
             </div>
@@ -571,7 +572,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             <div class="form-group">
                 <label for="output_file">Chemin ou dossier de sortie (Optionnel)</label>
                 <div class="input-with-btn">
-                    <input type="text" id="output_file" placeholder="Ex: /Users/amnesia/Downloads/Lila_upscaled.mp4">
+                    <input type="text" id="output_file" placeholder="Ex: /Users/amnesia/Downloads/">
                     <button type="button" class="btn-browse" onclick="openExplorer('output_file')">📂 Parcourir</button>
                 </div>
             </div>
@@ -613,7 +614,11 @@ HTML_CONTENT = """<!DOCTYPE html>
                     </div>
                     <div class="checkbox-group">
                         <input type="checkbox" id="interpolate">
-                        <label for="interpolate" style="margin-bottom: 0; font-weight: normal;">Fluidifier à 60 FPS (Interpolation de mouvement)</label>
+                        <label for="interpolate" style="margin-bottom: 0; font-weight: normal;">Fluidifier à 60 FPS (Interpolation)</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="recursive">
+                        <label for="recursive" style="margin-bottom: 0; font-weight: normal;">Traiter les sous-dossiers récursivement</label>
                     </div>
                 </div>
             </div>
@@ -650,7 +655,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             <div class="breadcrumbs" id="breadcrumbs"></div>
             <div class="file-list" id="fileList"></div>
             <div class="modal-footer">
-                <button type="button" class="btn-primary" id="selectCurrentFolderBtn" style="display:none; flex:none; width:auto; padding: 10px 16px;">Sélectionner ce dossier</button>
+                <button type="button" class="btn-primary" id="selectCurrentFolderBtn" style="flex:none; width:auto; padding: 10px 16px;">Sélectionner ce dossier actuel</button>
                 <button type="button" class="btn-cancel" onclick="closeExplorer()" style="flex:none; width:auto; padding: 10px 16px;">Fermer</button>
             </div>
         </div>
@@ -707,15 +712,10 @@ HTML_CONTENT = """<!DOCTYPE html>
                 
                 // Folder selection config
                 const selectFolderBtn = document.getElementById("selectCurrentFolderBtn");
-                if (activeInputId === "output_file") {
-                    selectFolderBtn.style.display = "block";
-                    selectFolderBtn.onclick = () => {
-                        document.getElementById("output_file").value = data.current_path;
-                        closeExplorer();
-                    };
-                } else {
-                    selectFolderBtn.style.display = "none";
-                }
+                selectFolderBtn.onclick = () => {
+                    document.getElementById(activeInputId).value = data.current_path;
+                    closeExplorer();
+                };
             });
         }
 
@@ -734,7 +734,8 @@ HTML_CONTENT = """<!DOCTYPE html>
                 model: document.getElementById("model").value,
                 workers: parseInt(document.getElementById("workers").value),
                 denoise: document.getElementById("denoise").checked,
-                interpolate: document.getElementById("interpolate").checked
+                interpolate: document.getElementById("interpolate").checked,
+                recursive: document.getElementById("recursive").checked
             };
             
             fetch("/upscale", {
