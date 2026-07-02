@@ -1,0 +1,562 @@
+import json
+import os
+import subprocess
+import threading
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# Global state to track upscaling task
+task_state = {
+    "status": "idle",       # idle, running, completed, failed
+    "progress": 0.0,
+    "current_segment": "",
+    "logs": [],
+    "output_file": ""
+}
+
+task_lock = threading.Lock()
+active_process = None
+
+def run_upscale_thread(cmd_args):
+    global active_process
+    with task_lock:
+        task_state["status"] = "running"
+        task_state["progress"] = 0.0
+        task_state["current_segment"] = "Starting split..."
+        task_state["logs"] = ["Starting upscaler CLI pipeline..."]
+        task_state["output_file"] = ""
+        
+    cmd = [".venv/bin/python", "upscale.py"] + cmd_args
+    
+    try:
+        active_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        
+        buffer = []
+        while True:
+            char = active_process.stdout.read(1)
+            if not char:
+                break
+            if char in ("\r", "\n"):
+                line = "".join(buffer).strip()
+                buffer.clear()
+                if line:
+                    with task_lock:
+                        task_state["logs"].append(line)
+                        if len(task_state["logs"]) > 100:
+                            task_state["logs"].pop(0)
+                        
+                        # Parse progress bars, e.g. "seg_0000.mkv: [███░░░] 12.50%" or "progress: 12.50%"
+                        if "%" in line:
+                            try:
+                                val_str = line.split("%")[0].strip().split()[-1]
+                                if "[" in val_str:
+                                    val_str = val_str.split("]")[-1].strip()
+                                pct = float(val_str)
+                                task_state["progress"] = max(0.0, min(100.0, pct))
+                            except ValueError:
+                                pass
+                        
+                        if "Segment" in line:
+                            task_state["current_segment"] = line
+                        elif "Successfully upscaled" in line:
+                            parts = line.split("->")
+                            if len(parts) > 1:
+                                task_state["output_file"] = parts[1].strip()
+            else:
+                buffer.append(char)
+                
+        active_process.wait()
+        
+        with task_lock:
+            if active_process.returncode == 0:
+                task_state["status"] = "completed"
+                task_state["progress"] = 100.0
+                task_state["current_segment"] = "Finished successfully!"
+                task_state["logs"].append("Upscaling completed successfully.")
+            else:
+                task_state["status"] = "failed"
+                task_state["logs"].append(f"Process exited with non-zero code: {active_process.returncode}")
+    except Exception as e:
+        with task_lock:
+            task_state["status"] = "failed"
+            task_state["logs"].append(f"Unexpected error: {e}")
+    finally:
+        active_process = None
+
+class GUIHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Suppress request spam logs in console
+        return
+
+    def do_GET(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        
+        if parsed_url.path == "/":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(HTML_CONTENT.encode("utf-8"))
+            
+        elif parsed_url.path == "/status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            with task_lock:
+                self.wfile.write(json.dumps(task_state).encode("utf-8"))
+                
+        elif parsed_url.path == "/cancel":
+            global active_process
+            if active_process:
+                try:
+                    active_process.terminate()
+                except Exception:
+                    pass
+            with task_lock:
+                task_state["status"] = "failed"
+                task_state["logs"].append("Process cancelled by user.")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"cancelled": True}).encode("utf-8"))
+            
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/upscale":
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            params = json.loads(post_data.decode("utf-8"))
+            
+            input_file = params.get("input_file")
+            output_file = params.get("output_file")
+            preset = params.get("preset", "720p")
+            model = params.get("model", "auto")
+            workers = params.get("workers", 1)
+            denoise = params.get("denoise", False)
+            interpolate = params.get("interpolate", False)
+            
+            # Build CLI arguments
+            cmd_args = [input_file]
+            if output_file:
+                cmd_args.extend(["-o", output_file])
+                
+            cmd_args.extend(["--preset", preset])
+            cmd_args.extend(["--model", model])
+            cmd_args.extend(["--workers", str(workers)])
+            
+            # Load native Upscayl binary if present
+            upscayl_bin = "/Applications/Upscayl.app/Contents/Resources/bin/upscayl-bin"
+            if os.path.exists(upscayl_bin):
+                cmd_args.extend(["--realesrgan-bin", upscayl_bin])
+                
+            if denoise:
+                cmd_args.append("--temporal-denoise")
+            if interpolate:
+                # Interpolate to 60 FPS
+                cmd_args.extend(["--interpolate-fps", "60"])
+                
+            # Run in separate thread
+            thread = threading.Thread(target=run_upscale_thread, args=(cmd_args,))
+            thread.daemon = True
+            thread.start()
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"started": True}).encode("utf-8"))
+
+HTML_CONTENT = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apple Silicon Video Upscaler</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(22, 28, 45, 0.6);
+            --accent: linear-gradient(135deg, #6366f1, #06b6d4);
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+            --border-color: rgba(255, 255, 255, 0.08);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-image: radial-gradient(circle at top right, rgba(99, 102, 241, 0.15), transparent 400px),
+                              radial-gradient(circle at bottom left, rgba(6, 182, 212, 0.15), transparent 400px);
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            backdrop-filter: blur(16px);
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            font-weight: 800;
+            background: var(--accent);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .subtitle {
+            font-size: 1rem;
+            color: var(--text-muted);
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-color);
+        }
+
+        input[type="text"], select, input[type="number"] {
+            width: 100%;
+            padding: 14px 16px;
+            background: rgba(17, 24, 39, 0.8);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            color: var(--text-color);
+            font-family: inherit;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus, select:focus, input[type="number"]:focus {
+            border-color: #6366f1;
+            outline: none;
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: #6366f1;
+            cursor: pointer;
+        }
+
+        .btn-container {
+            display: flex;
+            gap: 16px;
+            margin-top: 32px;
+        }
+
+        button {
+            flex: 1;
+            padding: 16px;
+            font-family: inherit;
+            font-size: 1.05rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 14px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-primary:hover {
+            opacity: 0.95;
+            transform: translateY(-2px);
+        }
+
+        .btn-cancel {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+        }
+
+        .btn-cancel:hover {
+            background: rgba(239, 68, 68, 0.3);
+        }
+
+        /* Progress Card */
+        .progress-card {
+            display: none;
+            margin-top: 40px;
+            padding: 24px;
+            background: rgba(17, 24, 39, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+        }
+
+        .progress-title {
+            display: flex;
+            justify-content: space-between;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 16px;
+        }
+
+        .progress-bar-fill {
+            width: 0%;
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.4s ease;
+        }
+
+        .log-terminal {
+            width: 100%;
+            height: 200px;
+            background: #05070c;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: #34d399;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            margin-top: 16px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .status-running { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+        .status-completed { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+        .status-failed { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Apple Silicon Video Upscaler</h1>
+        <div class="subtitle">Interface graphique locale de traitement IA</div>
+
+        <form id="upscaleForm" onsubmit="startUpscale(event)">
+            <div class="form-group">
+                <label for="input_file">Chemin de la vidéo source (Absolu ou Relatif)</label>
+                <input type="text" id="input_file" required placeholder="Ex: /Users/amnesia/Downloads/Lila.mp4">
+            </div>
+
+            <div class="form-group">
+                <label for="output_file">Chemin de la vidéo de sortie (Optionnel)</label>
+                <input type="text" id="output_file" placeholder="Ex: /Users/amnesia/Downloads/Lila_upscaled.mp4">
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="preset">Preset de Résolution</label>
+                    <select id="preset">
+                        <option value="480p">480p (Target: 480px height)</option>
+                        <option value="720p">720p (Target: 720px height)</option>
+                        <option value="1080p" selected>1080p (Target: 1080px height)</option>
+                        <option value="4k">4K (Target: 2160px height)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="model">Modèle d'Upscaling IA</label>
+                    <select id="model">
+                        <option value="auto" selected>Détection Automatique (Recommandé)</option>
+                        <option value="realesrgan-x4plus">Real-ESRGAN x4plus (Films Réels)</option>
+                        <option value="realesr-animevideov3">Real-ESR Anime Video v3 (Animation 2D/3D)</option>
+                        <option value="digital-art-4x">Digital Art 4x (CGI / Upscayl)</option>
+                        <option value="ultrasharp-4x">UltraSharp 4x (Photos/Textures)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="workers">Nombre de Chunks en Parallèle</label>
+                    <input type="number" id="workers" min="1" max="8" value="2">
+                </div>
+
+                <div class="form-group">
+                    <label style="margin-bottom: 15px;">Filtres & Améliorations</label>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="denoise">
+                        <label for="denoise" style="margin-bottom: 0; font-weight: normal;">Réduire le scintillement (Denoise temporel)</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="interpolate">
+                        <label for="interpolate" style="margin-bottom: 0; font-weight: normal;">Fluidifier à 60 FPS (Interpolation de mouvement)</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="btn-container">
+                <button type="submit" class="btn-primary" id="submitBtn">Lancer l'Upscaling par IA</button>
+                <button type="button" class="btn-cancel" id="cancelBtn" onclick="cancelUpscale()" style="display:none;">Annuler</button>
+            </div>
+        </form>
+
+        <div class="progress-card" id="progressCard">
+            <div class="progress-title">
+                <span id="progressSegment">Initialisation...</span>
+                <span id="progressText">0%</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="progressBar"></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Statut : <span class="status-badge" id="statusBadge">Idle</span></span>
+                <span id="outputSuccess" style="color: #34d399; font-weight: 600;"></span>
+            </div>
+            <div class="log-terminal" id="logTerminal"></div>
+        </div>
+    </div>
+
+    <script>
+        let pollInterval = null;
+
+        function startUpscale(event) {
+            event.preventDefault();
+            
+            const params = {
+                input_file: document.getElementById("input_file").value,
+                output_file: document.getElementById("output_file").value,
+                preset: document.getElementById("preset").value,
+                model: document.getElementById("model").value,
+                workers: parseInt(document.getElementById("workers").value),
+                denoise: document.getElementById("denoise").checked,
+                interpolate: document.getElementById("interpolate").checked
+            };
+            
+            fetch("/upscale", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(params)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.started) {
+                    document.getElementById("progressCard").style.display = "block";
+                    document.getElementById("submitBtn").style.display = "none";
+                    document.getElementById("cancelBtn").style.display = "block";
+                    document.getElementById("outputSuccess").innerText = "";
+                    
+                    if (pollInterval) clearInterval(pollInterval);
+                    pollInterval = setInterval(pollStatus, 500);
+                }
+            });
+        }
+
+        function pollStatus() {
+            fetch("/status")
+            .then(res => res.json())
+            .then(state => {
+                document.getElementById("progressText").innerText = Math.round(state.progress) + "%";
+                document.getElementById("progressBar").style.width = state.progress + "%";
+                document.getElementById("progressSegment").innerText = state.current_segment;
+                
+                const badge = document.getElementById("statusBadge");
+                badge.innerText = state.status.toUpperCase();
+                badge.className = "status-badge status-" + state.status;
+                
+                const term = document.getElementById("logTerminal");
+                term.innerText = state.logs.join("\\n");
+                term.scrollTop = term.scrollHeight;
+                
+                if (state.status === "completed") {
+                    clearInterval(pollInterval);
+                    document.getElementById("submitBtn").style.display = "block";
+                    document.getElementById("cancelBtn").style.display = "none";
+                    if (state.output_file) {
+                        document.getElementById("outputSuccess").innerText = "Sortie : " + state.output_file.split("/").pop();
+                    }
+                } else if (state.status === "failed") {
+                    clearInterval(pollInterval);
+                    document.getElementById("submitBtn").style.display = "block";
+                    document.getElementById("cancelBtn").style.display = "none";
+                }
+            });
+        }
+
+        function cancelUpscale() {
+            fetch("/cancel")
+            .then(() => {
+                clearInterval(pollInterval);
+                pollStatus();
+            });
+        }
+    </script>
+</body>
+</html>
+"""
+
+def main():
+    server = HTTPServer(("127.0.0.1", 8080), GUIHandler)
+    print("================================================================================")
+    print("   Apple Silicon Video Upscaler GUI Server Started Successfully")
+    print("   Open your browser and navigate to: http://127.0.0.1:8080")
+    print("================================================================================")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    print("\\nStopping server...")
+
+if __name__ == "__main__":
+    main()
