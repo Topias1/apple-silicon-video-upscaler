@@ -120,8 +120,8 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument(
         "--workers",
         type=int,
-        default=1,
-        help="Number of segment chunks to process in parallel. Defaults to 1."
+        default=4,
+        help="Number of segment chunks to process in parallel. Defaults to 4."
     )
     parser.add_argument(
         "--hdr-mode",

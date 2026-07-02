@@ -725,7 +725,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             <div class="grid">
                 <div class="form-group">
                     <label for="workers">Parallel Chunks</label>
-                    <input type="number" id="workers" min="1" max="8" value="2">
+                    <input type="number" id="workers" min="1" max="8" value="4">
                 </div>
 
                 <div class="form-group">
