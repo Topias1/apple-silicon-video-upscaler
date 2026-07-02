@@ -41,12 +41,18 @@ def run_upscale_thread(cmd_args):
         cmd = [python_bin, upscale_script] + cmd_args
     
     try:
+        import os
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env["VIDEO_UPSCALER_CLI"] = "1"
+        
         active_process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            bufsize=1
+            bufsize=1,
+            env=env
         )
         
         buffer = []
@@ -291,7 +297,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         .container {
             width: 100%;
-            max-width: 800px;
+            max-width: 1050px;
             background: var(--card-bg);
             border: 1px solid var(--border-color);
             border-radius: 24px;
@@ -300,13 +306,25 @@ HTML_CONTENT = """<!DOCTYPE html>
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
         }
 
+        .main-layout {
+            display: grid;
+            grid-template-columns: 1fr 1.1fr;
+            gap: 24px;
+            align-items: start;
+        }
+
+        .status-side {
+            display: flex;
+            flex-direction: column;
+        }
+
         h1 {
             font-size: 1.8rem;
             font-weight: 800;
             background: var(--accent);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 4px;
+            margin: 0;
             text-align: center;
         }
 
@@ -432,8 +450,6 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         /* Progress Card */
         .progress-card {
-            display: none;
-            margin-top: 20px;
             padding: 16px;
             background: rgba(17, 24, 39, 0.6);
             border: 1px solid var(--border-color);
@@ -465,7 +481,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         .log-terminal {
             width: 100%;
-            height: 120px;
+            height: 250px;
             background: #05070c;
             border: 1px solid var(--border-color);
             border-radius: 10px;
@@ -486,6 +502,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             font-weight: 600;
         }
 
+        .status-idle { background: rgba(156, 163, 175, 0.2); color: #9ca3af; }
         .status-running { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
         .status-completed { background: rgba(16, 185, 129, 0.2); color: #34d399; }
         .status-failed { background: rgba(239, 68, 68, 0.2); color: #f87171; }
@@ -593,21 +610,23 @@ HTML_CONTENT = """<!DOCTYPE html>
 </head>
 <body>
     <div class="container">
-        <div style="text-align: center; margin-bottom: 12px;">
-            <img src="/logo.jpg" alt="Logo" style="width: 80px; height: 80px; border-radius: 20px; box-shadow: 0 10px 30px rgba(99, 102, 241, 0.4); border: 2px solid rgba(255, 255, 255, 0.1); display: inline-block;">
+        <div style="text-align: center; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 16px;">
+            <img src="/logo.jpg" alt="Logo" style="width: 50px; height: 50px; border-radius: 12px; box-shadow: 0 5px 15px rgba(99, 102, 241, 0.4); border: 2px solid rgba(255, 255, 255, 0.1); display: inline-block;">
+            <h1>Apple Silicon Video Upscaler</h1>
         </div>
-        <h1>Apple Silicon Video Upscaler</h1>
-        <div class="subtitle">Interface graphique locale de traitement IA</div>
+        <div class="subtitle" style="margin-bottom: 20px;">Interface graphique locale de traitement IA</div>
 
-        <form id="upscaleForm" onsubmit="startUpscale(event)">
-            <div class="form-group">
-                <label for="input_file">Vidéo ou Dossier source</label>
-                <div class="input-with-btn">
-                    <input type="text" id="input_file" required placeholder="Sélectionnez un fichier ou un dossier...">
-                    <button type="button" class="btn-browse" onclick="openExplorer('input_file', false)">🎥 Fichier</button>
-                    <button type="button" class="btn-browse" onclick="openExplorer('input_file', true)">📁 Dossier</button>
-                </div>
-            </div>
+        <div class="main-layout">
+            <div class="form-side">
+                <form id="upscaleForm" onsubmit="startUpscale(event)">
+                    <div class="form-group">
+                        <label for="input_file">Vidéo ou Dossier source</label>
+                        <div class="input-with-btn">
+                            <input type="text" id="input_file" required placeholder="Sélectionnez un fichier ou un dossier...">
+                            <button type="button" class="btn-browse" onclick="openExplorer('input_file', false)">🎥 Fichier</button>
+                            <button type="button" class="btn-browse" onclick="openExplorer('input_file', true)">📁 Dossier</button>
+                        </div>
+                    </div>
 
             <div class="form-group">
                 <label for="output_file">Dossier de sortie (Optionnel)</label>
@@ -662,26 +681,30 @@ HTML_CONTENT = """<!DOCTYPE html>
                     </div>
                 </div>
             </div>
-
-            <div class="btn-container">
-                <button type="submit" class="btn-primary" id="submitBtn">Lancer l'Upscaling par IA</button>
-                <button type="button" class="btn-cancel" id="cancelBtn" onclick="cancelUpscale()" style="display:none;">Annuler</button>
-            </div>
         </form>
+    </div>
+            
+            <div class="status-side">
+                <div class="progress-card" id="progressCard">
+                    <div class="progress-title">
+                        <span id="progressSegment">Prêt à démarrer</span>
+                        <span id="progressText">0%</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="progressBar"></div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Statut : <span class="status-badge status-idle" id="statusBadge">IDLE</span></span>
+                        <span id="outputSuccess" style="color: #34d399; font-weight: 600;"></span>
+                    </div>
+                    <div class="log-terminal" id="logTerminal">En attente de lancement d'upscaling...</div>
+                </div>
 
-        <div class="progress-card" id="progressCard">
-            <div class="progress-title">
-                <span id="progressSegment">Initialisation...</span>
-                <span id="progressText">0%</span>
+                <div class="btn-container">
+                    <button type="submit" form="upscaleForm" class="btn-primary" id="submitBtn">Lancer l'Upscaling par IA</button>
+                    <button type="button" class="btn-cancel" id="cancelBtn" onclick="cancelUpscale()" style="display:none;">Annuler</button>
+                </div>
             </div>
-            <div class="progress-bar-container">
-                <div class="progress-bar-fill" id="progressBar"></div>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span>Statut : <span class="status-badge" id="statusBadge">Idle</span></span>
-                <span id="outputSuccess" style="color: #34d399; font-weight: 600;"></span>
-            </div>
-            <div class="log-terminal" id="logTerminal"></div>
         </div>
     </div>
 
