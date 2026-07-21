@@ -471,7 +471,8 @@ def run_single_file(
                 info.is_hdr,
                 opts["hdr_mode"],
                 info.is_vfr,
-                opts["vfr_mode"]
+                opts["vfr_mode"],
+                is_interlaced=info.is_interlaced
             )
             run_cmd_checked(extract_cmd, input_abs, "frame extraction", seg_name)
 

@@ -32,17 +32,27 @@ def build_extract_cmd(
     is_hdr: bool,
     hdr_mode: str,
     is_vfr: bool,
-    vfr_mode: str
+    vfr_mode: str,
+    is_interlaced: bool = False
 ) -> List[str]:
     """Builds the ffmpeg command to extract frames from a segment, injecting VFR/HDR filters."""
     out_pattern = os.path.join(frames_dir, "f_%08d.png")
 
     filters: List[str] = []
-    
+
+    # 0. Deinterlace, before anything else looks at the picture. An interlaced
+    # frame holds two half-pictures taken at different instants; upscaling it
+    # as-is magnifies the comb into thick stripes, so the result comes out
+    # worse than the source — the one outcome this app cannot afford on the
+    # VHS and DV captures it exists for. bwdif is used in send_frame mode:
+    # one output frame per input frame, so frame counts still reconcile.
+    if is_interlaced:
+        filters.append("bwdif=mode=send_frame")
+
     # 1. VFR CFR conformance
     if is_vfr and vfr_mode == "cfr":
         filters.append(f"fps={fps}")
-        
+
     # 2. HDR tonemapping
     if is_hdr and hdr_mode == "tonemap":
         filters.append("zscale=t=linear:npl=100,tonemap=tonemap=hable,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=rgb24")

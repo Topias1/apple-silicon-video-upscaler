@@ -19,6 +19,10 @@ class VideoInfo(NamedTuple):
     is_vfr: bool
     color_transfer: Optional[str]
     color_primaries: Optional[str]
+    # True when the source carries interlaced fields. Upscaling an interlaced
+    # frame magnifies the comb instead of removing it, so the fields have to
+    # be woven back before anything else touches the picture.
+    is_interlaced: bool = False
     # Displayed width / height. Differs from width/height on anamorphic
     # sources (PAL DV is 720x576 stored, 4:3 displayed). It has to travel with
     # the probe because upscayl-bin strips the sample aspect ratio from the
@@ -177,6 +181,12 @@ def probe_video(video_path: str) -> VideoInfo:
 
     has_chapters = len(chapters) > 0
 
+    # ffprobe reports the field order as tt/bb/tb/bt when the source is
+    # interlaced, and progressive/unknown otherwise. Anything that names a
+    # field order means fields are present.
+    field_order = (video_stream.get("field_order") or "").strip().lower()
+    is_interlaced = field_order in ("tt", "bb", "tb", "bt")
+
     # Displayed geometry: storage dimensions corrected by the pixel aspect,
     # then by rotation. ffprobe's display_aspect_ratio is preferred when
     # present, the sample aspect ratio is the fallback, square pixels the
@@ -216,6 +226,7 @@ def probe_video(video_path: str) -> VideoInfo:
         is_vfr=is_vfr,
         color_transfer=color_transfer,
         color_primaries=color_primaries,
+        is_interlaced=is_interlaced,
         display_aspect=display_aspect,
     )
 
